@@ -1,6 +1,15 @@
-#############################################
-# This is the definition of the ODE class.  #
-#############################################
+############################################
+# This is the definition of the ODE class. #
+#  With this class you can define an ODE   #
+#    system (originally developed for      #
+#   circadian rhythms) with which you can  #
+# perform phase response analysis on. The  #
+# class uses the direct an iPRC methods of #
+#  calculating the phase response curve.   #
+#    The main function of this class is    #
+#      phase response optimization.        #
+#        Jacob Bellman, 3/1/2015
+############################################
 
 from __future__ import print_function
 import sympy
@@ -14,16 +23,14 @@ from numpy import linalg as LA
 import time
 
 class ODE:
-    'Common base class for all ODEs'
-    ###################################################################
-    # The initializer of the ODE class requires a string name (name), # 
-    # a matrix of sympy variables (variables), a dictionary of sympy  #
-    #    parameters and their values (parameters), a list of sympy    #
-    #  parameters that act as placeholders for constant pulses to RHS #
-    # functions (par_add), a matrix of sympy ODE RHS functions (RHS), #
-    #  and values of the variables on the limit cycle at the maximum  #
-    #                        value of frq mRNA.                       #
-    ###################################################################
+    """
+    The initializer of the ODE class requires a string name (name),
+    a matrix of sympy variables (variables), a dictionary of sympy
+        parameters and their values (parameters), a list of sympy
+      parameters that act as placeholders for constant pulses to RHS 
+     functions (par_add), a matrix of sympy ODE RHS functions (RHS), 
+      and values of the variables on the limit cycle at the maximum
+                            value of frq mRNA.                         """
     def __init__(self, name, variables, parameters, par_add,
                  RHS, lim_cyc_vals):
         
@@ -42,7 +49,7 @@ class ODE:
         self.t = sympy.Symbol('t')
 
         #######################################################
-        #  Create numpy functions, not symbolic, for the RHS  #
+        #  Create numpy functions, non symbolic, for the RHS  #
         #  as well as the jacobian wrt the variables as well  #
         #                 as the parameters                   #
         #######################################################
@@ -72,6 +79,27 @@ class ODE:
     ######                                                #######
     #############################################################
     #############################################################
+
+#---------------------------------------------------------------------
+    
+    def addParsToRHS(self, pulses_add):
+
+        # In the RHS function, incorporate all additive pulses.
+        def f_RHS_add(Y,t,p):
+           
+            # The unpulsed RHS (in terms of additive pulses):                
+            a = self.f_ODE_RHS(Y,t,p)
+            
+            # A vector to be filled with corresponding additive pulses:
+            b = np.zeros(a.shape)
+            for this_par in pulses_add:
+                this_par_amp = pulses_add[this_par]
+                this_par_ind = self.par_add.index(this_par)
+                b[this_par_ind] = this_par_amp
+        
+            return a+b
+            
+        return f_RHS_add
 
 #---------------------------------------------------------------------
 
@@ -205,51 +233,7 @@ class ODE:
         prc_vec_out = (prc_vec + self.period/2.) % \
                       (self.period) - self.period/2.        
         
-        return prc_vec_out 
- 
-#---------------------------------------------------------------------
-    def changePars(self, pulses_pars):
-
-        # change parameters for the pulse. Don't forget to change them back
-        for this_par in pulses_pars:
-            
-            this_amp = pulses_pars[this_par]                
-            
-            # Add the amp of the pulse to the parameter
-            self.parameters[this_par] += this_amp    
-
-#---------------------------------------------------------------------
-    
-    def addParsToRHS(self, pulses_add):
-
-        # In the RHS function, incorporate all additive pulses.
-        def f_RHS_add(Y,t,p):
-           
-            # The unpulsed RHS (in terms of additive pulses):                
-            a = self.f_ODE_RHS(Y,t,p)
-            
-            # A vector to be filled with corresponding additive pulses:
-            b = np.zeros(a.shape)
-            for this_par in pulses_add:
-                this_par_amp = pulses_add[this_par]
-                this_par_ind = self.par_add.index(this_par)
-                b[this_par_ind] = this_par_amp
-        
-            return a+b
-            
-        return f_RHS_add
-        
-#---------------------------------------------------------------------
-   
-    def changeParsBack(self, pulses_pars):
-        
-        # set parameters back to normal for after pulses
-        for this_par in pulses_pars:
-            
-            this_amp = pulses_pars[this_par]                
-            
-            # Return the parameter to its original value
-            self.parameters[this_par] -= this_amp      
+        return prc_vec_out      
 
 #---------------------------------------------------------------------        
 
@@ -304,64 +288,27 @@ class ODE:
         return prc_vec_out
 
 #---------------------------------------------------------------------
+    def changePars(self, pulses_pars):
 
-    # Here is a function that returns an interpolation of delx
-    # for an input phi by solving x' = f(x,p+dp) with initial conditions
-    # x(0) = 
-    def find_delx(self,phi,pulses,sigma):
-        
-        ###############################################################
-        # Change the parameter values during the pulse and integrate. #
-        ###############################################################
-        
-        # Divide the pulses dictionary into two dictionaries, one for
-        # parameters pulses, one for additive pulses.
-        [parameters_pulses, par_add_pulses] = self.dividePulses(pulses)
-        
-        # Change the parameters for the pulse
-        self.changePars(parameters_pulses)
-        
-        # Add to RHS where necessary
-        f_ODE_RHS_add_pulse = self.addParsToRHS(par_add_pulses)           
-        
-        # Define times for integration during the pulse (dp):
-        dp_int_len = sigma
-        dt = 0.005
-        num_grid_points = 100.*int(dp_int_len/dt+1)           
-        dp_times = np.linspace(0,dp_int_len,num_grid_points)            
-        
-        # Initial conditions for delx are the same as Y_interp at phi            
-        dp_init = np.squeeze(self.Y_interp(phi))
- 
-        # Integrate during the pulse (dp):
-        dp_sol = integrate.odeint(f_ODE_RHS_add_pulse, dp_init,
-                                  dp_times, (self.parameters.values(),))
-                        
-        plt.plot(dp_times, dp_sol)
-        plt.show()
-        
-        # Interpolate the pulsed solution per variable (put in list)
-        Y_pulsed_interp_list = [InterpolatedUnivariateSpline(dp_times, dp_sol[:,ind])\
-                                for ind in range(0,self.num_vars)]
-        
-        # Use the list of the interpolated pulsed solution to define an
-        # interpolation function that returns an np array.                            
-        def Y_pulsed_interp(times):
-            output = Y_pulsed_interp_list[0](times)
-            for ind in range (1,self.num_vars):
-                output = np.vstack((output,Y_pulsed_interp_list[ind](times)))
-            return output.transpose()
-        
-        # Return the parameters to their original values (unpulse them)
-        self.changeParsBack(parameters_pulses)            
-        
-        def delx(times):
+        # change parameters for the pulse. Don't forget to change them back
+        for this_par in pulses_pars:
             
-            diff = Y_pulsed_interp(times) - self.Y_interp(times)
+            this_amp = pulses_pars[this_par]                
             
-            return np.squeeze(diff)
+            # Add the amp of the pulse to the parameter
+            self.parameters[this_par] += this_amp    
+        
+#---------------------------------------------------------------------
+   
+    def changeParsBack(self, pulses_pars):
+        
+        # set parameters back to normal for after pulses
+        for this_par in pulses_pars:
             
-        return delx
+            this_amp = pulses_pars[this_par]                
+            
+            # Return the parameter to its original value
+            self.parameters[this_par] -= this_amp 
 
 #---------------------------------------------------------------------
 
@@ -837,6 +784,66 @@ class ODE:
                 print(''.join([str1, str2]))
                 
         return parameters_pulses, par_add_pulses
+
+#---------------------------------------------------------------------
+
+    # Here is a function that returns an interpolation of delx
+    # for an input phi by solving x' = f(x,p+dp) with initial conditions
+    # x(0) = 
+    def find_delx(self,phi,pulses,sigma):
+        
+        ###############################################################
+        # Change the parameter values during the pulse and integrate. #
+        ###############################################################
+        
+        # Divide the pulses dictionary into two dictionaries, one for
+        # parameters pulses, one for additive pulses.
+        [parameters_pulses, par_add_pulses] = self.dividePulses(pulses)
+        
+        # Change the parameters for the pulse
+        self.changePars(parameters_pulses)
+        
+        # Add to RHS where necessary
+        f_ODE_RHS_add_pulse = self.addParsToRHS(par_add_pulses)           
+        
+        # Define times for integration during the pulse (dp):
+        dp_int_len = sigma
+        dt = 0.005
+        num_grid_points = 100.*int(dp_int_len/dt+1)           
+        dp_times = np.linspace(0,dp_int_len,num_grid_points)            
+        
+        # Initial conditions for delx are the same as Y_interp at phi            
+        dp_init = np.squeeze(self.Y_interp(phi))
+ 
+        # Integrate during the pulse (dp):
+        dp_sol = integrate.odeint(f_ODE_RHS_add_pulse, dp_init,
+                                  dp_times, (self.parameters.values(),))
+                        
+        plt.plot(dp_times, dp_sol)
+        plt.show()
+        
+        # Interpolate the pulsed solution per variable (put in list)
+        Y_pulsed_interp_list = [InterpolatedUnivariateSpline(dp_times, dp_sol[:,ind])\
+                                for ind in range(0,self.num_vars)]
+        
+        # Use the list of the interpolated pulsed solution to define an
+        # interpolation function that returns an np array.                            
+        def Y_pulsed_interp(times):
+            output = Y_pulsed_interp_list[0](times)
+            for ind in range (1,self.num_vars):
+                output = np.vstack((output,Y_pulsed_interp_list[ind](times)))
+            return output.transpose()
+        
+        # Return the parameters to their original values (unpulse them)
+        self.changeParsBack(parameters_pulses)            
+        
+        def delx(times):
+            
+            diff = Y_pulsed_interp(times) - self.Y_interp(times)
+            
+            return np.squeeze(diff)
+            
+        return delx
 
 #---------------------------------------------------------------------
     
